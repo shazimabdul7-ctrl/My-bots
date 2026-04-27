@@ -159,10 +159,10 @@ export class DerivClient {
     const reqId = typeof msg.req_id === "number" ? msg.req_id : undefined;
 
     if (reqId !== undefined) {
-      // First response captures subscription.id (for later forget).
+      // Refresh subscription.id on every response (reconnects mint new ids).
       const sub = this.subs.get(reqId);
       if (sub) {
-        if (msg.subscription?.id && !sub.id) sub.id = msg.subscription.id;
+        if (msg.subscription?.id) sub.id = msg.subscription.id;
         sub.handler(msg);
       }
 
@@ -226,13 +226,17 @@ export class DerivClient {
     };
     this.subs.set(reqId, sub);
 
-    const sendIt = async () => {
-      await this.connect();
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    // If already open, send now. Otherwise trigger (or join) a connect and let
+    // onopen's re-subscribe loop deliver this sub exactly once.
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
         this.ws.send(JSON.stringify({ ...sub.request, req_id: reqId }));
+      } catch {
+        /* noop — onclose/reconnect will retry via onopen */
       }
-    };
-    sendIt().catch(() => {});
+    } else {
+      this.connect().catch(() => {});
+    }
 
     return () => this.forget(reqId);
   }
